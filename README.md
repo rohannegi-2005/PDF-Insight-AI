@@ -197,7 +197,7 @@ This project demonstrates hands-on expertise in:
 ---
 
 
-### 💬 HR/Recruiter Note
+### 💬 Note
 
 > This repository demonstrates practical expertise in **Retrieval-Augmented Generation (RAG)** pipelines — including embeddings, vector stores, LangChain LCEL chaining, and Groq LLM integration.  
 > The project reflects strong foundations in **applied AI engineering**, **data pipelines**, and **modern GenAI tooling**, making it an excellent showcase of both **software engineering discipline** and **AI problem-solving ability**.
