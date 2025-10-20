@@ -1,0 +1,25 @@
+# Core LangChain packages
+langchain>=0.3.23,<0.4
+langchain-core>=0.3.52,<0.4
+langchain-community>=0.3.5,<0.4
+
+# Vector store integrations
+langchain-astradb>=0.6,<0.7
+
+# Embedding models
+langchain-huggingface>=0.1.2
+sentence-transformers>=3.1.1
+torch>=2.4.0
+
+# Text splitting and PDF processing
+langchain-text-splitters>=0.3.2
+pypdf>=5.0.0
+
+# LLM provider (Groq)
+langchain-groq>=0.1.2
+
+# Data utilities
+typing-extensions>=4.12.2
+
+# Optional: logging, tqdm for progress visualization
+tqdm>=4.66.5
