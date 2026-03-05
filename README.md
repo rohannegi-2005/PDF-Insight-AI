@@ -191,7 +191,7 @@ This project demonstrates hands-on expertise in:
 
 **Rohan Negi**  
 💼 AI Developer | Enthusiast in LLMs, RAG, and applied NLP  
-📧 [rohannegi2005@gmail.com](mailto:rohannegi2005@gmail.com)  
+📧 [rohannnegi2005@gmail.com](mailto:rohannnegi2005@gmail.com)  
 🌐 [GitHub Profile](https://github.com/rohannegi-2005)  
 
 ---
