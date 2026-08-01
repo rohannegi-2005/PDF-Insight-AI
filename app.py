@@ -29,6 +29,7 @@ from core.rag_pipeline import (
     stream_answer,
 )
 from core.vector_store import (
+    clear_vector_store,
     get_embedding_model,
     get_retriever,
     get_vector_store,
@@ -79,7 +80,7 @@ def load_pipeline():
     """
     embeddings = load_embeddings()
     vector_store = load_vector_store(embeddings)
-    retriever = get_retriever(vector_store, k=6)
+    retriever = get_retriever(vector_store, k=8)
     chain = load_conversational_chain(retriever)
     return vector_store, chain
 
@@ -107,9 +108,30 @@ with st.sidebar:
 
     uploaded_file = st.file_uploader("Upload a PDF", type=["pdf"])
 
+    # Re-indexing the same PDF (or any PDF) without clearing first would
+    # just append more copies of the same chunks into AstraDB -- vector
+    # stores have no built-in de-duplication, so every "Process & Index"
+    # click is a pure insert. Left unchecked over several uploads, that
+    # means duplicate chunks crowding out genuinely different content
+    # during retrieval. Defaulting this to checked keeps the knowledge
+    # base clean for a single-document demo app; uncheck it only if you
+    # deliberately want to build up a multi-document collection.
+    clear_before_indexing = st.checkbox(
+        "Clear existing knowledge base before indexing",
+        value=True,
+        help=(
+            "Recommended: prevents duplicate chunks from piling up if you "
+            "re-upload the same (or a different) PDF more than once."
+        ),
+    )
+
     if uploaded_file is not None and st.button("Process & Index PDF", use_container_width=True):
         try:
             vector_store_for_ingest = load_vector_store(load_embeddings())
+
+            if clear_before_indexing:
+                with st.spinner("Clearing existing knowledge base..."):
+                    clear_vector_store(vector_store_for_ingest)
 
             with st.spinner("Chunking PDF and generating embeddings..."):
                 # PyPDFLoader needs a real file path, so the uploaded

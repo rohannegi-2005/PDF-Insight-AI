@@ -78,11 +78,12 @@ def get_retriever(vector_store: AstraDBVectorStore, k: int = 8):
     return vector_store.as_retriever(
         search_type="mmr",
         search_kwargs={
-            "k": k,          # final number of chunks returned
-            "fetch_k": 20,   # candidate pool MMR selects from before diversifying
+            "k": k,              # final number of chunks returned
+            "fetch_k": 20,       # candidate pool MMR selects from before diversifying
             "lambda_mult": 0.5,  # 0 = max diversity, 1 = max relevance (0.5 balances both)
         },
     )
+
 
 def ingest_documents(vector_store: AstraDBVectorStore, documents: List[Document]) -> List[str]:
     """
