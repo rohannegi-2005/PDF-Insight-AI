@@ -65,15 +65,24 @@ def get_vector_store(embeddings: Optional[HuggingFaceEmbeddings] = None) -> Astr
     )
 
 
-def get_retriever(vector_store: AstraDBVectorStore, k: int = 6):
+def get_retriever(vector_store: AstraDBVectorStore, k: int = 8):
     """
-    Wrap the vector store as a LangChain retriever.
+    Wrap the vector store as a LangChain retriever using Maximal Marginal
+    Relevance (MMR) search instead of plain similarity search.
 
-    `k=6` mirrors the original prototype's retriever configuration --
-    return the 6 most semantically similar chunks for a given query.
+    Plain similarity search can return several near-duplicate chunks if
+    a book repeats a theme across pages -- MMR explicitly balances
+    relevance against diversity, so the k chunks passed to the LLM cover
+    more distinct angles on the question instead of overlapping content.
     """
-    return vector_store.as_retriever(search_kwargs={"k": k})
-
+    return vector_store.as_retriever(
+        search_type="mmr",
+        search_kwargs={
+            "k": k,          # final number of chunks returned
+            "fetch_k": 20,   # candidate pool MMR selects from before diversifying
+            "lambda_mult": 0.5,  # 0 = max diversity, 1 = max relevance (0.5 balances both)
+        },
+    )
 
 def ingest_documents(vector_store: AstraDBVectorStore, documents: List[Document]) -> List[str]:
     """
