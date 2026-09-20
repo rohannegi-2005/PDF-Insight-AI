@@ -3,101 +3,130 @@ core/document_utils.py
 -----------------------
 Document ingestion utilities.
 
-This module owns everything related to turning a raw PDF file into a list
-of clean, appropriately-sized `Document` chunks that are ready to be
-embedded and stored in the vector database.
+This module turns a raw PDF file into a list of clean, metadata-rich
+`Document` chunks ready to be embedded and stored in the vector database.
 
-Kept 1:1 in spirit with the original `SmartPDFProcessor` from the
-single-file prototype -- same loader (PyPDFLoader), same splitter
-(RecursiveCharacterTextSplitter) -- just isolated into its own module so
-it can be imported by the Streamlit UI (for on-demand uploads) or any
-future ingestion script/CLI without dragging in Streamlit or AstraDB code.
+Supports two chunking strategies, chosen via config.CHUNKING_STRATEGY
+(or overridden per-instance):
+    - "fixed"    : RecursiveCharacterTextSplitter -- splits every N characters
+    - "semantic" : SemanticChunker (core/semantic_chunker.py) -- splits where
+                   the topic actually shifts, using sentence embeddings
+
+Both strategies are kept (rather than deleting the old one) so we can
+directly compare them later in the evaluation harness -- "semantic
+chunking improved Recall@5 by X%" is a much stronger claim than just
+asserting it's better.
 """
 
-from typing import List
+import os
+from typing import List, Optional
 
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_core.documents import Document
+from langchain_core.embeddings import Embeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
+
+import config
+from core.semantic_chunker import SemanticChunker
 
 
 class SmartPDFProcessor:
     """
     Loads a PDF, cleans the extracted text, and splits it into
     metadata-rich chunks suitable for embedding.
-
-    Why a class instead of a function?
-    -----------------------------------
-    Chunking behaviour (size/overlap) is a *configuration*, not a one-off
-    parameter -- wrapping it in a class lets you build one processor with
-    a given configuration and reuse it across many PDFs, which is exactly
-    what happens in the Streamlit app's "upload & index" flow.
     """
 
-    def __init__(self, chunk_size: int = 1000, chunk_overlap: int = 100):
+    def __init__(
+        self,
+        embeddings: Optional[Embeddings] = None,
+        chunk_method: Optional[str] = None,
+        chunk_size: int = config.FIXED_CHUNK_SIZE,
+        chunk_overlap: int = config.FIXED_CHUNK_OVERLAP,
+    ):
         """
         Parameters
         ----------
-        chunk_size : int
-            Target number of characters per chunk. 1000 chars is a good
-            middle ground for MiniLM-based embeddings (max ~256 tokens) --
-            large enough to preserve context, small enough to stay well
-            under the embedding model's token limit.
-        chunk_overlap : int
-            Number of overlapping characters between consecutive chunks.
-            Overlap prevents a sentence that straddles a chunk boundary
-            from losing meaning in either chunk.
+        embeddings : Embeddings, optional
+            Required only when chunk_method == "semantic" -- the
+            embedding model used to compare sentence-to-sentence
+            similarity. Reuse the same model as the vector store
+            (get_embedding_model() in core/vector_store.py).
+        chunk_method : str, optional
+            "fixed" or "semantic". Defaults to config.CHUNKING_STRATEGY
+            if not given.
+        chunk_size, chunk_overlap : int
+            Only used when chunk_method == "fixed".
         """
-        # NOTE: the original prototype accidentally wrote these as 1-tuples
-        # (`self.chunk_size = chunk_size,`  <- trailing comma). Fixed here
-        # to plain ints -- they weren't read again in the original code,
-        # but leaving a latent bug like that in a "production-ready"
-        # rewrite is exactly the kind of thing an interviewer will notice.
-        self.chunk_size = chunk_size
-        self.chunk_overlap = chunk_overlap
+        self.chunk_method = chunk_method or config.CHUNKING_STRATEGY
 
-        self.text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=chunk_size,
-            chunk_overlap=chunk_overlap,
-            # Splitting only on spaces (rather than the default
-            # ["\n\n", "\n", " ", ""] cascade) sidesteps the noisy/
-            # inconsistent newline structure PDFs often extract with.
-            separators=[" "],
-        )
+        # Build only the splitter we're actually going to use.
+        if self.chunk_method == "semantic":
+            if embeddings is None:
+                raise ValueError(
+                    "chunk_method='semantic' requires an embeddings model. "
+                    "Pass one in: SmartPDFProcessor(embeddings=get_embedding_model())."
+                )
+            self.splitter = SemanticChunker(
+                embeddings=embeddings,
+                similarity_threshold=config.SEMANTIC_SIMILARITY_THRESHOLD,
+                min_chunk_chars=config.SEMANTIC_MIN_CHUNK_CHARS,
+                max_chunk_chars=config.SEMANTIC_MAX_CHUNK_CHARS,
+            )
+        elif self.chunk_method == "fixed":
+            self.splitter = RecursiveCharacterTextSplitter(
+                chunk_size=chunk_size,
+                chunk_overlap=chunk_overlap,
+                separators=[" "],
+            )
+        else:
+            raise ValueError(f"Unknown chunk_method: {self.chunk_method!r}")
 
-    def process_pdf(self, pdf_path: str) -> List[Document]:
+    def process_pdf(self, pdf_path: str, paper_id: Optional[str] = None) -> List[Document]:
         """
         Load a PDF from disk and return a list of cleaned, chunked
-        `Document` objects, each carrying page-level metadata.
+        `Document` objects, each carrying page-level and paper-level
+        metadata.
+
+        `paper_id` lets multiple papers share one vector store without
+        their chunks being confused for each other -- needed once the
+        Research Agent starts comparing evidence ACROSS several papers.
+        Defaults to the filename if not given.
         """
+        source_file = os.path.basename(pdf_path)
+        paper_id = paper_id or source_file
+
         loader = PyPDFLoader(pdf_path)
-        pages = loader.load()  # one Document per PDF page
+        pages = loader.load()
 
         processed_chunks: List[Document] = []
 
         for page_num, page in enumerate(pages):
             cleaned_text = self._clean_text(page.page_content)
 
-            # Skip near-empty pages (cover pages, blank pages, scanned
-            # images with no extractable text, etc.)
             if len(cleaned_text.strip()) < 40:
                 continue
 
-            chunks = self.text_splitter.create_documents(
-                texts=[cleaned_text],
-                metadatas=[{
-                    **page.metadata,
-                    "page": page_num + 1,
-                    "total_pages": len(pages),
-                    "chunk_method": "smart_pdf_processor",
-                    "char_count": len(cleaned_text),
-                    # Track the source filename so citations in the UI
-                    # can show *which document* an answer came from once
-                    # the app supports indexing more than one PDF.
-                    "source_file": pdf_path.split("/")[-1],
-                }],
-            )
-            processed_chunks.extend(chunks)
+            # Both RecursiveCharacterTextSplitter and SemanticChunker
+            # expose the same `.split_text(text) -> List[str]` interface,
+            # so this one line works no matter which strategy is active --
+            # process_pdf doesn't need an if/else here.
+            chunk_texts = self.splitter.split_text(cleaned_text)
+
+            for chunk_text in chunk_texts:
+                processed_chunks.append(
+                    Document(
+                        page_content=chunk_text,
+                        metadata={
+                            **page.metadata,
+                            "page": page_num + 1,
+                            "total_pages": len(pages),
+                            "chunk_method": self.chunk_method,
+                            "char_count": len(chunk_text),
+                            "source_file": source_file,
+                            "paper_id": paper_id,
+                        },
+                    )
+                )
 
         return processed_chunks
 
