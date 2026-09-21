@@ -18,6 +18,9 @@ pypdf==6.14.2
 # LLM provider (Groq)
 langchain-groq==0.3.8
 
+# Sparse (keyword) retrieval
+rank_bm25==0.2.2
+
 # Frontend
 streamlit==1.60.0
 python-dotenv==1.2.2

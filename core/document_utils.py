@@ -18,6 +18,7 @@ chunking improved Recall@5 by X%" is a much stronger claim than just
 asserting it's better.
 """
 
+import hashlib
 import os
 from typing import List, Optional
 
@@ -113,6 +114,17 @@ class SmartPDFProcessor:
             chunk_texts = self.splitter.split_text(cleaned_text)
 
             for chunk_text in chunk_texts:
+                # A stable, deterministic ID for this exact chunk (same
+                # source file + page + text always produces the same ID).
+                # Needed in core/retrieval.py to recognize "this is the
+                # same chunk" when it shows up in BOTH the dense results
+                # and the sparse (BM25) results, so fusion can combine
+                # their scores correctly instead of treating them as two
+                # different chunks.
+                chunk_id = hashlib.md5(
+                    f"{source_file}|{page_num + 1}|{chunk_text}".encode("utf-8")
+                ).hexdigest()[:16]
+
                 processed_chunks.append(
                     Document(
                         page_content=chunk_text,
@@ -124,6 +136,7 @@ class SmartPDFProcessor:
                             "char_count": len(chunk_text),
                             "source_file": source_file,
                             "paper_id": paper_id,
+                            "chunk_id": chunk_id,
                         },
                     )
                 )
