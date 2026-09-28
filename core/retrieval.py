@@ -35,6 +35,7 @@ from langchain_astradb import AstraDBVectorStore
 from langchain_core.documents import Document
 
 import config
+from core.reranker import rerank
 from core.sparse_store import SparseStore
 from core.vector_store import get_retriever
 
@@ -133,3 +134,31 @@ def hybrid_search(
     fused = reciprocal_rank_fusion([dense_results, sparse_results])
 
     return fused[:k]
+
+
+def hybrid_search_with_rerank(
+    query: str,
+    vector_store: AstraDBVectorStore,
+    sparse_store: SparseStore,
+    candidate_pool_size: int = config.MMR_FETCH_K,
+    rerank_candidate_k: int = config.RERANK_CANDIDATE_K,
+    final_top_n: int = config.RERANK_TOP_N,
+) -> List[Document]:
+    """
+    The full retrieval pipeline in one call: dense + sparse search ->
+    RRF fusion -> cross-encoder reranking -> final top-N chunks.
+
+    This is the function agents (Step 6 onward) will actually call --
+    hybrid_search() and rerank() stay available separately too, since
+    it's useful to be able to test/measure each stage independently
+    (exactly what we did testing hybrid_search alone in Step 3).
+    """
+    fused_candidates = hybrid_search(
+        query,
+        vector_store,
+        sparse_store,
+        k=rerank_candidate_k,
+        candidate_pool_size=candidate_pool_size,
+    )
+
+    return rerank(query, fused_candidates, top_n=final_top_n)

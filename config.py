@@ -60,3 +60,15 @@ LLM_TEMPERATURE = 0
 RETRIEVAL_K = 8
 MMR_FETCH_K = 20
 MMR_LAMBDA_MULT = 0.5
+
+# ---------------------------------------------------------------------------
+# Reranking (Step 4)
+# ---------------------------------------------------------------------------
+# Free, local cross-encoder from sentence-transformers -- no new
+# dependency, same library already used for embeddings.
+RERANKER_MODEL_NAME = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+# How many fused hybrid candidates to feed INTO the reranker.
+RERANK_CANDIDATE_K = 20
+# How many chunks to keep AFTER reranking -- this is what actually
+# reaches the LLM prompt, so keep it small and high-precision.
+RERANK_TOP_N = 5
