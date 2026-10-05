@@ -55,11 +55,16 @@ from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.runnables.history import RunnableWithMessageHistory
 from langchain_groq import ChatGroq
 
+import config
+
 # ---------------------------------------------------------------------------
 # LLM
 # ---------------------------------------------------------------------------
-
-LLM_MODEL_NAME = "llama-3.1-8b-instant"  # Groq's fast Llama-3.1 8B model
+# Model name now comes from config.py (single source of truth) instead of
+# a separate local constant -- this file used to define its own
+# LLM_MODEL_NAME before config.py existed, which meant changing the model
+# here didn't affect agents/research_agent.py's get_llm() calls, and vice
+# versa. Centralizing it avoids that kind of silent drift.
 
 
 def get_llm() -> ChatGroq:
@@ -78,7 +83,12 @@ def get_llm() -> ChatGroq:
         raise EnvironmentError(
             "Missing GROQ_API_KEY. Make sure it is set in your .env file."
         )
-    return ChatGroq(model=LLM_MODEL_NAME, temperature=0, groq_api_key=api_key, streaming=True)
+    return ChatGroq(
+        model=config.LLM_MODEL_NAME,
+        temperature=config.LLM_TEMPERATURE,
+        groq_api_key=api_key,
+        streaming=True,
+    )
 
 
 # ---------------------------------------------------------------------------
