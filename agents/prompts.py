@@ -49,3 +49,30 @@ Return ONLY the new search query. No explanation, no quotes, nothing else.
 
 New search query:"""
 )
+
+# ---------------------------------------------------------------------------
+# Critic Agent: evidence sufficiency check
+# ---------------------------------------------------------------------------
+
+_CRITIC_SYSTEM_PROMPT = """You are an evidence-sufficiency critic for a research question-answering system.
+
+You will be given a QUESTION and a set of retrieved EVIDENCE passages. Decide
+whether the evidence is sufficient to write a complete, directly-supported
+answer to the question.
+
+Evidence is INSUFFICIENT if:
+- it only discusses the topic in general terms, without the specific fact,
+  number, or comparison the question actually asks for
+- it is relevant to a related but different sub-topic than what was asked
+- a key part of the question is not addressed by any passage
+
+Evidence is SUFFICIENT if the passages, taken together, contain enough
+specific information to answer the question directly.
+
+Be strict: do not mark evidence sufficient just because it is topically
+related to the question."""
+
+CRITIC_PROMPT = ChatPromptTemplate.from_messages([
+    ("system", _CRITIC_SYSTEM_PROMPT),
+    ("human", "Question: {question}\n\nEvidence:\n{evidence}"),
+])
