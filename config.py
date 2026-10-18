@@ -51,6 +51,9 @@ COLLECTION_NAME = "astra_vector_langchain"
 # ---------------------------------------------------------------------------
 # LLM (Groq)
 # ---------------------------------------------------------------------------
+# NOTE: if this model ever 404s with "model_not_found", check the live,
+# authoritative list at https://console.groq.com/docs/models -- Groq's
+# available models can change, and access can vary by account.
 LLM_MODEL_NAME = "openai/gpt-oss-20b"
 LLM_TEMPERATURE = 0
 
@@ -58,6 +61,9 @@ LLM_TEMPERATURE = 0
 # Retrieval (used starting Step 2+: hybrid search, MMR, reranking)
 # ---------------------------------------------------------------------------
 RETRIEVAL_K = 8
+# Kept <= typical small test collections (e.g. the 17-chunk sample PDF)
+# to avoid AstraDB's MMR sort occasionally erroring when fetch_k exceeds
+# the total number of documents in the collection.
 MMR_FETCH_K = 12
 MMR_LAMBDA_MULT = 0.5
 
@@ -72,3 +78,13 @@ RERANK_CANDIDATE_K = 20
 # How many chunks to keep AFTER reranking -- this is what actually
 # reaches the LLM prompt, so keep it small and high-precision.
 RERANK_TOP_N = 5
+
+# ---------------------------------------------------------------------------
+# Agentic loop (Step 7)
+# ---------------------------------------------------------------------------
+# Max number of times the graph will rewrite the query and search again
+# after the Critic judges evidence insufficient. Without a hard cap, a
+# genuinely unanswerable question (not covered by the document at all)
+# would retry forever -- this guarantees the graph always terminates,
+# answering with best-effort evidence if the budget runs out.
+MAX_RETRIES = 2

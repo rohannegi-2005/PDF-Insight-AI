@@ -76,3 +76,24 @@ CRITIC_PROMPT = ChatPromptTemplate.from_messages([
     ("system", _CRITIC_SYSTEM_PROMPT),
     ("human", "Question: {question}\n\nEvidence:\n{evidence}"),
 ])
+
+# ---------------------------------------------------------------------------
+# Answer generation (used by the LangGraph workflow's final node)
+# ---------------------------------------------------------------------------
+# Deliberately separate from core/rag_pipeline.py's qa_prompt: that one
+# includes a chat_history placeholder for the Streamlit conversational
+# chat, whereas the research graph answers a single question per run
+# with no conversation memory of its own.
+ANSWER_PROMPT = ChatPromptTemplate.from_template(
+    """Use the following retrieved evidence to answer the question. Cite
+specific facts from the evidence rather than general statements. If the
+evidence is incomplete, answer with what it does support and note what
+remains uncertain -- do not fabricate anything that is not in the evidence.
+
+Evidence:
+{context}
+
+Question: {question}
+
+Answer:"""
+)
