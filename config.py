@@ -56,16 +56,28 @@ COLLECTION_NAME = "astra_vector_langchain"
 # available models can change, and access can vary by account.
 LLM_MODEL_NAME = "openai/gpt-oss-20b"
 LLM_TEMPERATURE = 0
+# The Groq client retries rate-limit (429) and server (5xx) errors by itself,
+# with waiting in between. 4 is more forgiving than the default of 2.
+LLM_MAX_RETRIES = 4
+# How many times we ask for a "fixed form" answer (see agents/structured.py).
+STRUCTURED_OUTPUT_ATTEMPTS = 2
 
 # ---------------------------------------------------------------------------
 # Retrieval (used starting Step 2+: hybrid search, MMR, reranking)
 # ---------------------------------------------------------------------------
+# Final number of chunks for the plain dense-only chat chain.
 RETRIEVAL_K = 8
-# Kept <= typical small test collections (e.g. the 17-chunk sample PDF)
-# to avoid AstraDB's MMR sort occasionally erroring when fetch_k exceeds
-# the total number of documents in the collection.
-MMR_FETCH_K = 12
+# How many candidates EACH retriever (dense, sparse) gives to the fusion step.
+CANDIDATE_POOL_SIZE = 12
+# MMR looks at (k x this) nearest chunks, then keeps the k most diverse ones.
+MMR_FETCH_MULTIPLIER = 2
+# 0 = maximum diversity, 1 = maximum relevance.
 MMR_LAMBDA_MULT = 0.5
+# Reciprocal Rank Fusion smoothing constant (60 = the value from the RRF paper).
+RRF_K = 60
+# If AstraDB hiccups (503, timeout), try the dense search this many times
+# before continuing with sparse results only.
+DENSE_SEARCH_ATTEMPTS = 2
 
 # ---------------------------------------------------------------------------
 # Reranking (Step 4)
@@ -88,3 +100,14 @@ RERANK_TOP_N = 5
 # would retry forever -- this guarantees the graph always terminates,
 # answering with best-effort evidence if the budget runs out.
 MAX_RETRIES = 2
+# Evidence collected across retries is capped at this many chunks, so the
+# answer prompt does not grow without limit.
+MAX_EVIDENCE_CHUNKS = 8
+
+# ---------------------------------------------------------------------------
+# Multi-question research (Step 8)
+# ---------------------------------------------------------------------------
+# Max number of sub-questions a big question can be split into. Every
+# sub-question runs the full retrieve -> critic -> retry loop, so each
+# one costs several LLM calls. A cap keeps cost and rate-limit use sane.
+MAX_SUB_QUESTIONS = 3

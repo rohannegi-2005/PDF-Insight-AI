@@ -93,11 +93,12 @@ class SmartPDFProcessor:
         Research Agent starts comparing evidence ACROSS several papers.
         Defaults to the filename if not given.
         """
-        source_file = os.path.basename(pdf_path)
-        paper_id = paper_id or source_file
+        paper_id = paper_id or os.path.basename(pdf_path)
 
-        loader = PyPDFLoader(pdf_path)
-        pages = loader.load()
+        try:
+            pages = PyPDFLoader(pdf_path).load()
+        except Exception as error:
+            raise ValueError(f"Could not read the PDF '{paper_id}': {error}") from error
 
         processed_chunks: List[Document] = []
 
@@ -122,7 +123,7 @@ class SmartPDFProcessor:
                 # their scores correctly instead of treating them as two
                 # different chunks.
                 chunk_id = hashlib.md5(
-                    f"{source_file}|{page_num + 1}|{chunk_text}".encode("utf-8")
+                    f"{paper_id}|{page_num + 1}|{chunk_text}".encode("utf-8")
                 ).hexdigest()[:16]
 
                 processed_chunks.append(
@@ -134,7 +135,7 @@ class SmartPDFProcessor:
                             "total_pages": len(pages),
                             "chunk_method": self.chunk_method,
                             "char_count": len(chunk_text),
-                            "source_file": source_file,
+                            "source_file": paper_id,
                             "paper_id": paper_id,
                             "chunk_id": chunk_id,
                         },

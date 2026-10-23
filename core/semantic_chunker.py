@@ -22,9 +22,10 @@ What semantic chunking does instead
    A big drop in similarity usually means the topic just shifted.
 4. Cut a new chunk wherever similarity drops below a threshold, instead
    of at a fixed character count.
-5. Enforce a min/max chunk size so we don't end up with lots of tiny
-   one-sentence chunks, or one giant chunk if similarity stays high for
-   a very long stretch.
+5. Size guards: no tiny chunks, and NO chunk longer than max_chunk_chars
+   (a long stretch of text with no sentence breaks is cut at spaces).
+   The limit matters: the embedding model and the reranker both silently
+   ignore text beyond their token limit.
 
 This is a from-scratch implementation (not the langchain_experimental
 library) so every decision is visible -- useful when you need to explain
@@ -59,6 +60,29 @@ def _cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
     if denom == 0:
         return 0.0
     return float(np.dot(a, b) / denom)
+
+
+def _hard_split(text: str, max_chars: int) -> List[str]:
+    """
+    Cut a text that is too long into pieces of at most max_chars,
+    always at a space (a single word longer than max_chars is cut inside).
+    """
+    pieces: List[str] = []
+    current = ""
+    for word in text.split(" "):
+        candidate = word if not current else f"{current} {word}"
+        if len(candidate) <= max_chars:
+            current = candidate
+            continue
+        if current:
+            pieces.append(current)
+        while len(word) > max_chars:  # one enormous "word"
+            pieces.append(word[:max_chars])
+            word = word[max_chars:]
+        current = word
+    if current:
+        pieces.append(current)
+    return pieces
 
 
 class SemanticChunker:
@@ -105,44 +129,54 @@ class SemanticChunker:
         self.max_chunk_chars = max_chunk_chars
 
     def split_text(self, text: str) -> List[str]:
-        """
-        Split a block of text (e.g. one PDF page) into semantically
-        coherent chunks.
-        """
+        """Split one block of text (e.g. a PDF page) into chunks."""
+        text = text.strip()
+        if not text:
+            return []
+
         sentences = _split_into_sentences(text)
         if len(sentences) <= 1:
-            return [text] if text.strip() else []
+            return _hard_split(text, self.max_chunk_chars)
 
-        # Embed every sentence in ONE batched call -- much faster than
-        # calling the model sentence-by-sentence, since the model can
-        # process the whole batch together.
-        sentence_vectors = self.embeddings.embed_documents(sentences)
+        # One batched call is much faster than one call per sentence.
+        vectors = [np.array(v) for v in self.embeddings.embed_documents(sentences)]
 
         chunks: List[str] = []
-        current_chunk_sentences = [sentences[0]]
+        current = [sentences[0]]
 
         for i in range(1, len(sentences)):
-            prev_vector = np.array(sentence_vectors[i - 1])
-            curr_vector = np.array(sentence_vectors[i])
-            similarity = _cosine_similarity(prev_vector, curr_vector)
+            similarity = _cosine_similarity(vectors[i - 1], vectors[i])
+            current_length = sum(len(s) for s in current) + len(current) - 1
 
-            current_length = sum(len(s) for s in current_chunk_sentences)
-
-            # Cut here if EITHER: the topic just shifted (similarity
-            # dropped) AND the chunk-so-far is already a reasonable
-            # size, OR the chunk has hit the hard max-size ceiling.
-            should_break = (
+            topic_changed = (
                 similarity < self.similarity_threshold
                 and current_length >= self.min_chunk_chars
-            ) or current_length >= self.max_chunk_chars
+            )
+            would_be_too_long = current_length + 1 + len(sentences[i]) > self.max_chunk_chars
 
-            if should_break:
-                chunks.append(" ".join(current_chunk_sentences))
-                current_chunk_sentences = [sentences[i]]
+            if topic_changed or would_be_too_long:
+                chunks.append(" ".join(current))
+                current = [sentences[i]]
             else:
-                current_chunk_sentences.append(sentences[i])
+                current.append(sentences[i])
 
-        if current_chunk_sentences:
-            chunks.append(" ".join(current_chunk_sentences))
+        chunks.append(" ".join(current))
 
-        return chunks
+        # A single sentence can be longer than the limit: cut it at spaces.
+        sized: List[str] = []
+        for chunk in chunks:
+            if len(chunk) > self.max_chunk_chars:
+                sized.extend(_hard_split(chunk, self.max_chunk_chars))
+            else:
+                sized.append(chunk)
+
+        # A tiny last chunk is merged into the one before it (if it fits).
+        if (
+            len(sized) >= 2
+            and len(sized[-1]) < self.min_chunk_chars
+            and len(sized[-2]) + 1 + len(sized[-1]) <= self.max_chunk_chars
+        ):
+            sized[-2] = f"{sized[-2]} {sized[-1]}"
+            sized.pop()
+
+        return sized

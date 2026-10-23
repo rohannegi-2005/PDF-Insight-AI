@@ -1,20 +1,10 @@
 """
 graph/state.py
 ----------------
-Shared state schema for the LangGraph research workflow.
+The "notebook" that travels through the LangGraph workflow.
 
-What is "state" in LangGraph?
---------------------------------
-Every node in the graph (Step by step in graph/workflow.py) receives
-the current state, does its job, and returns a dict of just the fields
-it wants to CHANGE. LangGraph merges that returned dict into the
-overall state before handing it to the next node. Nodes never mutate
-a shared object directly and never need to know about fields they
-don't use -- they just read what they need and return updates.
-
-Using a TypedDict (rather than a plain dict) means editors and type
-checkers can catch typos in field names ("documnets" instead of
-"documents") before you ever run the code.
+Each node reads what it needs and returns ONLY the fields it wants to
+change; LangGraph merges that into the state before the next node runs.
 """
 
 from typing import List, Optional, TypedDict
@@ -25,35 +15,34 @@ from agents.critic_agent import EvidenceVerdict
 
 
 class ResearchState(TypedDict):
-    """
-    The state object passed between every node in the research graph.
-    """
-
     question: str
-    """The original user question. Set once at the start, never changed."""
+    """The question being researched. Set once, never changed."""
 
     search_query: str
-    """The search query currently being used. Starts as the rewritten
-    version of `question`, and changes each time the Critic asks for a
-    retry."""
+    """The query used for the CURRENT search (changes on every retry)."""
 
     documents: List[Document]
-    """The most recent retrieval+rerank result for `search_query`."""
+    """What the latest search returned (kept for debugging)."""
+
+    evidence: List[Document]
+    """ALL evidence gathered so far, across retries, without duplicates.
+    The Critic judges this, and the final answer is written from this."""
+
+    new_evidence_count: int
+    """How many chunks the latest search added that we did not have yet.
+    If a retry adds 0, searching again would not help, so we stop."""
 
     verdict: Optional[EvidenceVerdict]
-    """The Critic's most recent judgment on `documents`."""
+    """The Critic's latest judgment on `evidence`."""
 
     retry_count: int
-    """How many retries have happened so far. Starts at 0."""
+    """How many retries have happened. Starts at 0."""
 
     max_retries: int
-    """The retry budget -- see config.MAX_RETRIES."""
+    """The retry budget (config.MAX_RETRIES)."""
 
     attempts: List[dict]
-    """A log of every attempt (search query tried + verdict), purely for
-    transparency/debugging -- Step 10's UI will show this to the user so
-    they can see the system's reasoning, not just its final answer."""
+    """Log of every attempt (query + verdict), for transparency."""
 
     final_answer: Optional[str]
-    """Populated once the graph decides to answer (either because
-    evidence was sufficient, or the retry budget ran out)."""
+    """The answer. Filled in by the last node."""

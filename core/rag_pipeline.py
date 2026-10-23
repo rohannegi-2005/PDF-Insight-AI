@@ -67,16 +67,18 @@ import config
 # versa. Centralizing it avoids that kind of silent drift.
 
 
-def get_llm() -> ChatGroq:
+def get_llm(streaming: bool = True) -> ChatGroq:
     """
-    Build the Groq chat model.
+    Build the Groq chat model. Every setting comes from config.py.
 
-    temperature=0 keeps answers deterministic and tightly grounded in the
-    retrieved context, which matters for a RAG system where hallucination
-    is the main failure mode you're trying to avoid.
+    temperature=0 keeps answers steady and tied to the retrieved text.
 
-    streaming=True enables token-by-token output, which is what powers
-    the word-by-word rendering in the Streamlit UI.
+    streaming=True gives token-by-token output (the Streamlit chat uses
+    it). Pass streaming=False for "fixed form" (structured) answers:
+    Groq does not support streaming together with Structured Outputs.
+
+    max_retries: the Groq client waits and retries by itself on
+    rate-limit (429) and server (5xx) errors.
     """
     api_key = os.getenv("GROQ_API_KEY")
     if not api_key:
@@ -87,7 +89,8 @@ def get_llm() -> ChatGroq:
         model=config.LLM_MODEL_NAME,
         temperature=config.LLM_TEMPERATURE,
         groq_api_key=api_key,
-        streaming=True,
+        streaming=streaming,
+        max_retries=config.LLM_MAX_RETRIES,
     )
 
 

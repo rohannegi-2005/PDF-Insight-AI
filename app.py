@@ -140,9 +140,15 @@ with st.sidebar:
                     tmp.write(uploaded_file.read())
                     tmp_path = tmp.name
 
-                processor = SmartPDFProcessor()
-                chunks = processor.process_pdf(tmp_path)
-                os.unlink(tmp_path)
+                # Reuse the already-loaded embedding model for semantic
+                # chunking -- avoids loading a second copy of MiniLM.
+                processor = SmartPDFProcessor(embeddings=load_embeddings())
+                try:
+                    # paper_id = the real file name, so citations show
+                    # "my_paper.pdf" and not the random temp file name.
+                    chunks = processor.process_pdf(tmp_path, paper_id=uploaded_file.name)
+                finally:
+                    os.unlink(tmp_path)  # always delete the temp file, even on error
 
             if chunks:
                 with st.spinner(f"Inserting {len(chunks)} chunks into AstraDB..."):
@@ -151,7 +157,7 @@ with st.sidebar:
             else:
                 st.warning("No extractable text found in this PDF.")
 
-        except EnvironmentError as e:
+        except (EnvironmentError, ValueError) as e:
             st.error(str(e))
 
     st.divider()
@@ -163,7 +169,7 @@ with st.sidebar:
 
     st.caption(
         "Conversational memory, streaming answers, and source citations "
-        "are all backed by AstraDB + Groq (Llama-3.1-8B-Instant)."
+        "are all backed by AstraDB + Groq."
     )
 
 

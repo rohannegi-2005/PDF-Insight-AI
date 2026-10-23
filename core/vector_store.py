@@ -18,10 +18,7 @@ from langchain_astradb import AstraDBVectorStore
 from langchain_core.documents import Document
 from langchain_huggingface import HuggingFaceEmbeddings
 
-# Module-level constants (rather than hardcoded inline) so they're easy to
-# spot, change, and reference from tests.
-EMBEDDING_MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
-COLLECTION_NAME = "astra_vector_langchain"
+import config
 
 
 def get_embedding_model() -> HuggingFaceEmbeddings:
@@ -32,7 +29,7 @@ def get_embedding_model() -> HuggingFaceEmbeddings:
     small (~80MB), runs fast on CPU, and produces 384-dim embeddings -- a
     solid accuracy/latency trade-off for demo-scale document sets.
     """
-    return HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL_NAME)
+    return HuggingFaceEmbeddings(model_name=config.EMBEDDING_MODEL_NAME)
 
 
 def get_vector_store(embeddings: Optional[HuggingFaceEmbeddings] = None) -> AstraDBVectorStore:
@@ -59,13 +56,13 @@ def get_vector_store(embeddings: Optional[HuggingFaceEmbeddings] = None) -> Astr
     return AstraDBVectorStore(
         embedding=embeddings,
         api_endpoint=api_endpoint,
-        collection_name=COLLECTION_NAME,
+        collection_name=config.COLLECTION_NAME,
         token=token,
         namespace=None,
     )
 
 
-def get_retriever(vector_store: AstraDBVectorStore, k: int = 8):
+def get_retriever(vector_store: AstraDBVectorStore, k: int = config.RETRIEVAL_K):
     """
     Wrap the vector store as a LangChain retriever using Maximal Marginal
     Relevance (MMR) search instead of plain similarity search.
@@ -75,12 +72,15 @@ def get_retriever(vector_store: AstraDBVectorStore, k: int = 8):
     relevance against diversity, so the k chunks passed to the LLM cover
     more distinct angles on the question instead of overlapping content.
     """
+    # fetch_k must always be larger than k so MMR has a pool to choose from.
+    fetch_k = max(k * config.MMR_FETCH_MULTIPLIER, k + 1)
+    
     return vector_store.as_retriever(
         search_type="mmr",
         search_kwargs={
             "k": k,              # final number of chunks returned
-            "fetch_k": 20,       # candidate pool MMR selects from before diversifying
-            "lambda_mult": 0.5,  # 0 = max diversity, 1 = max relevance (0.5 balances both)
+            "fetch_k": fetch_k,  # candidate pool MMR selects from before diversifying
+            "lambda_mult": config.MMR_LAMBDA_MULT, # 0 = max diversity, 1 = max relevance
         },
     )
 

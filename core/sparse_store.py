@@ -1,25 +1,11 @@
 """
 core/sparse_store.py
 ----------------------
-Sparse (keyword-based) retrieval using BM25.
+Sparse (keyword) retrieval with BM25 -- the SPARSE half of retrieval.
 
-Why do we need this if we already have dense (embedding) search?
---------------------------------------------------------------------
-Dense embeddings are great at matching MEANING ("financial trouble" ~
-"money problems") but can miss EXACT matches -- a specific name, an
-acronym, a number, a rare technical term the embedding model never
-learned to weigh heavily. BM25 is the opposite: it's a classic
-keyword-ranking algorithm (the backbone of search engines for decades
-before embeddings existed) -- it scores a chunk higher the more its
-exact words overlap with the query, giving extra weight to rare/
-important words and less weight to common ones ("the", "is", "paper").
-
-Combining both (Step 3 -- hybrid fusion) gives the best of each: BM25
-catches exact terms dense search might miss; dense search catches
-paraphrases/synonyms BM25 would miss.
-
-No paid API, no external service -- rank_bm25 runs entirely locally in
-Python, scoring purely from word overlap statistics.
+Dense search understands meaning; BM25 matches exact words (names,
+acronyms, numbers). Together (see core/retrieval.py) they cover each
+other's blind spots. Runs fully locally, no API.
 """
 
 import re
@@ -30,83 +16,82 @@ from rank_bm25 import BM25Okapi
 
 
 def _tokenize(text: str) -> List[str]:
-    """
-    Turn a string into a list of lowercase word tokens.
-
-    BM25 doesn't understand meaning -- it just counts which exact words
-    appear where -- so we lowercase everything and strip punctuation so
-    that "Method", "method,", and "method." are all treated as the same
-    token instead of three different ones.
-    """
-    text = text.lower()
-    return re.findall(r"[a-z0-9]+", text)
+    """Lowercase words only, so "Method," and "method" count as the same word."""
+    return re.findall(r"[a-z0-9]+", text.lower())
 
 
 class SparseStore:
-    """
-    An in-memory BM25 keyword index over a set of Document chunks.
-
-    Unlike AstraDB (a real hosted database), this index lives in memory
-    for the lifetime of the process -- it's built from a list of
-    Documents you hand it via `build()`. That's the right scope for a
-    portfolio project (a handful of papers); a production system would
-    back this with a dedicated search engine (Elasticsearch/OpenSearch)
-    instead of an in-memory index.
-    """
+    """An in-memory BM25 index over a list of Document chunks."""
 
     def __init__(self):
         self._bm25: Optional[BM25Okapi] = None
         self._documents: List[Document] = []
+        self._word_sets: List[set] = []  # the set of words in each chunk
 
     def build(self, documents: List[Document]) -> None:
         """
-        Build (or rebuild) the BM25 index from a list of Document chunks.
-        Must be called once before `search()` -- typically right after
-        SmartPDFProcessor.process_pdf() produces the chunk list, so the
-        sparse index and the dense vector store are built from the exact
-        same chunks.
-        """
-        self._documents = documents
-        tokenized_corpus = [_tokenize(doc.page_content) for doc in documents]
-        self._bm25 = BM25Okapi(tokenized_corpus)
+        Build (or rebuild) the index. Build it from the SAME chunk list
+        that you insert into the vector store, so dense and sparse agree.
 
-    def search(self, query: str, k: int = 8) -> List[Document]:
+        An empty list is allowed: the store simply stays "not ready"
+        (BM25Okapi itself crashes with ZeroDivisionError on an empty corpus).
         """
-        Return the top-k chunks whose exact word content best matches
-        the query, ranked by BM25 score (highest first).
-        """
-        if self._bm25 is None:
-            raise RuntimeError("SparseStore.build() must be called before search().")
-
-        tokenized_query = _tokenize(query)
-        scores = self._bm25.get_scores(tokenized_query)
-
-        ranked: List[Tuple[Document, float]] = sorted(
-            zip(self._documents, scores),
-            key=lambda pair: pair[1],
-            reverse=True,
-        )
-        return [doc for doc, _score in ranked[:k]]
+        self._documents = list(documents)
+        if not self._documents:
+            self._bm25 = None
+            self._word_sets = []
+            return
+        tokenized = [_tokenize(doc.page_content) for doc in self._documents]
+        self._word_sets = [set(words) for words in tokenized]
+        self._bm25 = BM25Okapi(tokenized)
 
     def search_with_scores(self, query: str, k: int = 8) -> List[Tuple[Document, float]]:
         """
-        Same as `search()`, but also returns each chunk's raw BM25
-        score. Needed in Step 3, where we combine BM25 scores with
-        dense similarity scores during fusion.
+        Top-k chunks with their BM25 scores, best first.
+
+        Only chunks that contain at least ONE word of the query are
+        returned. Without this rule, a query that matches nothing would
+        still return the first k chunks of the corpus (all tied at 0), and
+        those junk chunks would pollute the fusion.
+
+        Why "contains a query word" and not "score > 0"? BM25 gives a word
+        zero or NEGATIVE weight when it appears in more than half of the
+        chunks, which happens easily in a small collection. A score filter
+        would then throw away real matches.
         """
         if self._bm25 is None:
-            raise RuntimeError("SparseStore.build() must be called before search().")
+            raise RuntimeError("SparseStore.build() must be called with documents before search().")
 
-        tokenized_query = _tokenize(query)
-        scores = self._bm25.get_scores(tokenized_query)
+        tokens = _tokenize(query)
+        if not tokens:
+            return []
+        query_words = set(tokens)
 
-        ranked: List[Tuple[Document, float]] = sorted(
-            zip(self._documents, scores),
-            key=lambda pair: pair[1],
-            reverse=True,
-        )
-        return ranked[:k]
+        scores = self._bm25.get_scores(tokens)
+        matches = [
+            (doc, float(score))
+            for doc, score, words in zip(self._documents, scores, self._word_sets)
+            if query_words & words
+        ]
+        matches.sort(key=lambda pair: pair[1], reverse=True)
+        return matches[:k]
+
+    def search(self, query: str, k: int = 8) -> List[Document]:
+        """Same as search_with_scores(), documents only."""
+        return [doc for doc, _score in self.search_with_scores(query, k)]
+
+    def paper_ids(self) -> List[str]:
+        """
+        Names of the papers in this index (from each chunk's paper_id).
+        The planner and the Critic use this to know which papers exist.
+        """
+        names: List[str] = []
+        for doc in self._documents:
+            paper = doc.metadata.get("paper_id") or doc.metadata.get("source_file")
+            if paper and paper not in names:
+                names.append(paper)
+        return names
 
     def is_ready(self) -> bool:
-        """Whether build() has been called yet."""
+        """True once build() has been called with at least one document."""
         return self._bm25 is not None
